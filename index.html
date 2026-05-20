@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ÖChO 2026 — Ranking Predictor</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a212b;
+    --panel-2: #232c39;
+    --border: #2e3a4a;
+    --text: #e6ebf2;
+    --muted: #8b97a8;
+    --accent: #4f9eff;
+    --gold: #f5c542;
+    --silver: #c8d0d8;
+    --bronze: #cd7f32;
+    --danger: #e85f5f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    height: 100%;
+  }
+  header {
+    padding: 12px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header h1 {
+    font-size: 16px;
+    margin: 0;
+    margin-right: 12px;
+  }
+  header h1 .sub { color: var(--muted); font-weight: normal; margin-left: 6px; }
+  button, input[type="text"], input[type="number"] {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button {
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #2d3847; }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  button.primary:hover { background: #3d8be0; }
+  button.danger {
+    background: transparent;
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  button.danger:hover { background: rgba(232, 95, 95, 0.1); }
+  input[type="text"]:focus, input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  #board {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    overflow-x: auto;
+    min-height: calc(100vh - 60px);
+    align-items: flex-start;
+  }
+  .list-card {
+    flex: 0 0 280px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .list-card.actual {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .list-card.actual .card-title {
+    color: var(--accent);
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .card-title {
+    flex: 1;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 4px 6px;
+    border-radius: 4px;
+  }
+  .card-title:hover, .card-title:focus {
+    border-color: var(--border);
+    background: var(--panel-2);
+  }
+  .score-box {
+    background: var(--panel-2);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .score-box .score-val {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .cutoffs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .cutoffs label {
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    color: var(--muted);
+    gap: 2px;
+  }
+  .cutoffs label .swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .cutoffs input {
+    width: 100%;
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  ul.rank-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  ul.rank-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: grab;
+    user-select: none;
+    font-size: 13px;
+  }
+  ul.rank-list li:active { cursor: grabbing; }
+  ul.rank-list li.dragging { opacity: 0.4; }
+  ul.rank-list li.drop-above { border-top: 2px solid var(--accent); }
+  ul.rank-list li.drop-below { border-bottom: 2px solid var(--accent); }
+  ul.rank-list li .rank-num {
+    flex: 0 0 22px;
+    text-align: right;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  ul.rank-list li .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  ul.rank-list li.gold {
+    background: rgba(245, 197, 66, 0.18);
+    border-color: rgba(245, 197, 66, 0.5);
+  }
+  ul.rank-list li.silver {
+    background: rgba(200, 208, 216, 0.15);
+    border-color: rgba(200, 208, 216, 0.4);
+  }
+  ul.rank-list li.bronze {
+    background: rgba(205, 127, 50, 0.18);
+    border-color: rgba(205, 127, 50, 0.5);
+  }
+  .code-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .code-row input {
+    flex: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+  .code-row button {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .row-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .row-actions button {
+    flex: 1;
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .swatch.gold { background: var(--gold); }
+  .swatch.silver { background: var(--silver); }
+  .swatch.bronze { background: var(--bronze); }
+  dialog {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    min-width: 340px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.5); }
+  dialog h3 { margin-top: 0; }
+  dialog .dlg-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .copied-flash {
+    color: #5ec27a;
+    font-size: 11px;
+    margin-left: 6px;
+    opacity: 1;
+    transition: opacity 1s;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>ÖChO 2026 Ranking <span class="sub">— predictor & scorer</span></h1>
+  <button class="primary" id="add-list-btn">+ New list</button>
+  <button id="add-actual-btn">Set actual ranking</button>
+  <button id="load-code-btn">Load from code</button>
+  <span class="hint" id="header-hint" style="margin-left:auto;">Drag to reorder · scoring: TBD</span>
+</header>
+
+<div id="board"></div>
+
+<dialog id="load-dialog">
+  <h3>Load list from code</h3>
+  <p class="hint">Paste a saved code. A new list will be added (or the matching one updated if it exists).</p>
+  <input type="text" id="load-code-input" placeholder="Code…" style="width:100%;font-family:monospace;" />
+  <label style="display:block;margin-top:8px;font-size:12px;">
+    Name (optional):
+    <input type="text" id="load-name-input" placeholder="My prediction" style="width:100%;" />
+  </label>
+  <label style="display:block;margin-top:8px;font-size:12px;">
+    <input type="checkbox" id="load-as-actual" />
+    Load as the <strong>actual</strong> ranking (after competition)
+  </label>
+  <div class="dlg-actions">
+    <button id="load-cancel">Cancel</button>
+    <button class="primary" id="load-confirm">Load</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+
+const PARTICIPANTS = [
+  "Julia Alt",
+  "Marlene Anether",
+  "Matteo Bertignoll",
+  "David Buchinger",
+  "Yuncheng Dou",
+  "Florian Fieber",
+  "Alexander Glückert",
+  "Nora Grössenberger",
+  "Leander Gruber",
+  "Xuezheng Han",
+  "Esther Hayder",
+  "Marah Hochfilzer",
+  "Stefan Hojas",
+  "Kei Kazazic",
+  "Finn Köll",
+  "Alex Kurz",
+  "Benjamin Lux",
+  "Adrian Messner",
+  "Sophie Ofner",
+  "Abel Schmidt",
+  "Konrad Schmölz",
+  "Daniel Stadler-Ulitsch",
+  "Matthias Sühsl",
+  "Jonas Thiemann",
+];
+const N = PARTICIPANTS.length; // 24
+
+// --------- Encoding: permutation + 3 cutoffs (0..N) packed as BigInt → base62 ---------
+
+const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+function permToLehmer(perm) {
+  const available = Array.from({length: perm.length}, (_, i) => i);
+  const lehmer = [];
+  for (const v of perm) {
+    const idx = available.indexOf(v);
+    if (idx < 0) throw new Error("Invalid permutation: " + v);
+    lehmer.push(idx);
+    available.splice(idx, 1);
+  }
+  return lehmer;
+}
+function lehmerToInt(lehmer) {
+  let n = 0n;
+  const len = lehmer.length;
+  for (let i = 0; i < len; i++) {
+    n = n * BigInt(len - i) + BigInt(lehmer[i]);
+  }
+  return n;
+}
+function intToLehmer(n, len) {
+  const lehmer = new Array(len);
+  for (let i = len - 1; i >= 0; i--) {
+    const base = BigInt(len - i);
+    lehmer[i] = Number(n % base);
+    n = n / base;
+  }
+  return lehmer;
+}
+function lehmerToPerm(lehmer) {
+  const available = Array.from({length: lehmer.length}, (_, i) => i);
+  const perm = [];
+  for (const i of lehmer) {
+    perm.push(available[i]);
+    available.splice(i, 1);
+  }
+  return perm;
+}
+function toBase62(n) {
+  if (n === 0n) return "0";
+  let s = "";
+  while (n > 0n) {
+    s = BASE62[Number(n % 62n)] + s;
+    n = n / 62n;
+  }
+  return s;
+}
+function fromBase62(s) {
+  let n = 0n;
+  for (const c of s) {
+    const i = BASE62.indexOf(c);
+    if (i < 0) throw new Error("Bad character in code: " + c);
+    n = n * 62n + BigInt(i);
+  }
+  return n;
+}
+
+// Each cutoff in [0, N]; pack as base (N+1) = 25
+const CUT_BASE = BigInt(N + 1);
+function encodeState(perm, gold, silver, bronze) {
+  const pi = lehmerToInt(permToLehmer(perm));
+  const combined =
+    pi * CUT_BASE * CUT_BASE * CUT_BASE +
+    BigInt(gold) * CUT_BASE * CUT_BASE +
+    BigInt(silver) * CUT_BASE +
+    BigInt(bronze);
+  return toBase62(combined);
+}
+function decodeState(code) {
+  let n = fromBase62(code);
+  const bronze = Number(n % CUT_BASE); n = n / CUT_BASE;
+  const silver = Number(n % CUT_BASE); n = n / CUT_BASE;
+  const gold = Number(n % CUT_BASE); n = n / CUT_BASE;
+  const perm = lehmerToPerm(intToLehmer(n, N));
+  return { perm, gold, silver, bronze };
+}
+
+// --------- Scoring (placeholder until user provides mechanism) ---------
+
+let actualState = null; // { perm, gold, silver, bronze } once set
+
+function computeScore(state, actual) {
+  // Placeholder: simple Spearman-like score: sum |predicted_rank - actual_rank|.
+  // Will be replaced with the real scoring mechanism once the user defines it.
+  if (!actual) return null;
+  const actualRankOf = new Array(N);
+  actual.perm.forEach((id, i) => { actualRankOf[id] = i; });
+  let total = 0;
+  state.perm.forEach((id, i) => { total += Math.abs(i - actualRankOf[id]); });
+  return total;
+}
+
+// --------- List management ---------
+
+const lists = []; // array of { id, name, perm, gold, silver, bronze, el, isActual }
+let nextId = 1;
+
+function defaultPerm() {
+  return Array.from({length: N}, (_, i) => i);
+}
+
+function createList({ name, perm, gold, silver, bronze, isActual }) {
+  const state = {
+    id: nextId++,
+    name: name ?? (isActual ? "Actual ranking" : `Prediction ${lists.filter(l => !l.isActual).length + 1}`),
+    perm: perm ?? defaultPerm(),
+    gold: gold ?? 3,
+    silver: silver ?? 6,
+    bronze: bronze ?? 9,
+    isActual: !!isActual,
+    el: null,
+  };
+  lists.push(state);
+  renderCard(state);
+  // Insert actual first
+  if (state.isActual) {
+    document.getElementById("board").prepend(state.el);
+  } else {
+    document.getElementById("board").appendChild(state.el);
+  }
+  return state;
+}
+
+function removeList(state) {
+  const i = lists.indexOf(state);
+  if (i >= 0) lists.splice(i, 1);
+  state.el.remove();
+  if (state.isActual) {
+    actualState = null;
+    rescoreAll();
+  }
+}
+
+function rescoreAll() {
+  for (const l of lists) {
+    if (l.isActual) continue;
+    const score = computeScore(l, actualState);
+    const scoreEl = l.el.querySelector(".score-val");
+    if (scoreEl) scoreEl.textContent = score == null ? "—" : score;
+  }
+}
+
+// --------- Card rendering ---------
+
+function tierFor(rankIdx, gold, silver, bronze) {
+  // rankIdx is 0-based; gold/silver/bronze are inclusive top counts
+  const pos = rankIdx + 1;
+  if (pos <= gold) return "gold";
+  if (pos <= silver) return "silver";
+  if (pos <= bronze) return "bronze";
+  return "";
+}
+
+function renderCard(state) {
+  const card = document.createElement("div");
+  card.className = "list-card" + (state.isActual ? " actual" : "");
+  card.dataset.id = state.id;
+
+  // Head
+  const head = document.createElement("div");
+  head.className = "card-head";
+  const title = document.createElement("input");
+  title.type = "text";
+  title.className = "card-title";
+  title.value = state.name;
+  title.addEventListener("input", () => { state.name = title.value; });
+  head.appendChild(title);
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "danger";
+  delBtn.textContent = "✕";
+  delBtn.title = "Delete this list";
+  delBtn.addEventListener("click", () => {
+    if (confirm(`Delete "${state.name}"?`)) removeList(state);
+  });
+  head.appendChild(delBtn);
+  card.appendChild(head);
+
+  // Score (only for predictions)
+  if (!state.isActual) {
+    const scoreBox = document.createElement("div");
+    scoreBox.className = "score-box";
+    scoreBox.innerHTML = `<span>Score (vs actual)</span><span class="score-val">—</span>`;
+    card.appendChild(scoreBox);
+  }
+
+  // Cutoffs
+  const cutoffs = document.createElement("div");
+  cutoffs.className = "cutoffs";
+  cutoffs.innerHTML = `
+    <label><span><span class="swatch gold"></span>Gold top</span>
+      <input type="number" min="0" max="${N}" data-c="gold" value="${state.gold}" /></label>
+    <label><span><span class="swatch silver"></span>Silver top</span>
+      <input type="number" min="0" max="${N}" data-c="silver" value="${state.silver}" /></label>
+    <label><span><span class="swatch bronze"></span>Bronze top</span>
+      <input type="number" min="0" max="${N}" data-c="bronze" value="${state.bronze}" /></label>
+  `;
+  cutoffs.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const c = inp.dataset.c;
+      let v = parseInt(inp.value, 10);
+      if (isNaN(v)) v = 0;
+      v = Math.max(0, Math.min(N, v));
+      state[c] = v;
+      // enforce gold <= silver <= bronze
+      if (state.gold > state.silver) state.silver = state.gold;
+      if (state.silver > state.bronze) state.bronze = state.silver;
+      syncCutoffInputs(state);
+      paintTiers(state);
+      refreshCode(state);
+    });
+  });
+  card.appendChild(cutoffs);
+
+  // Rank list
+  const ul = document.createElement("ul");
+  ul.className = "rank-list";
+  state.perm.forEach((nameIdx, rankIdx) => {
+    ul.appendChild(makeRow(state, nameIdx, rankIdx));
+  });
+  card.appendChild(ul);
+
+  // Code row (auto-updates on every change)
+  const codeRow = document.createElement("div");
+  codeRow.className = "code-row";
+  const codeInput = document.createElement("input");
+  codeInput.type = "text";
+  codeInput.readOnly = true;
+  codeInput.placeholder = "Code";
+  codeInput.title = "Save this code — paste it into 'Load from code' to restore or edit this list";
+  const copyBtn = document.createElement("button");
+  copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", () => {
+    navigator.clipboard.writeText(codeInput.value).then(() => {
+      const f = document.createElement("span");
+      f.className = "copied-flash";
+      f.textContent = "copied!";
+      copyBtn.after(f);
+      setTimeout(() => { f.style.opacity = "0"; setTimeout(() => f.remove(), 1000); }, 600);
+    });
+  });
+  codeRow.appendChild(codeInput);
+  codeRow.appendChild(copyBtn);
+  card.appendChild(codeRow);
+
+  state.el = card;
+  paintTiers(state);
+  refreshCode(state);
+}
+
+function refreshCode(state) {
+  const codeInput = state.el.querySelector(".code-row input");
+  if (codeInput) codeInput.value = encodeState(state.perm, state.gold, state.silver, state.bronze);
+}
+
+function syncCutoffInputs(state) {
+  const inputs = state.el.querySelectorAll(".cutoffs input");
+  inputs.forEach(inp => { inp.value = state[inp.dataset.c]; });
+}
+
+function makeRow(state, nameIdx, rankIdx) {
+  const li = document.createElement("li");
+  li.draggable = true;
+  li.dataset.rank = rankIdx;
+  li.innerHTML = `<span class="rank-num">${rankIdx + 1}.</span><span class="name">${PARTICIPANTS[nameIdx]}</span>`;
+  attachDnd(li, state);
+  return li;
+}
+
+function paintTiers(state) {
+  const lis = state.el.querySelectorAll(".rank-list li");
+  lis.forEach((li, i) => {
+    li.classList.remove("gold", "silver", "bronze");
+    const t = tierFor(i, state.gold, state.silver, state.bronze);
+    if (t) li.classList.add(t);
+    li.querySelector(".rank-num").textContent = (i + 1) + ".";
+  });
+}
+
+// --------- Drag & drop within a card ---------
+
+let dragSrc = null;
+let dragState = null;
+
+function attachDnd(li, state) {
+  li.addEventListener("dragstart", (e) => {
+    dragSrc = li;
+    dragState = state;
+    li.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", li.dataset.rank);
+  });
+  li.addEventListener("dragend", () => {
+    li.classList.remove("dragging");
+    clearDropMarkers();
+    dragSrc = null;
+    dragState = null;
+  });
+  li.addEventListener("dragover", (e) => {
+    if (!dragSrc || dragState !== state) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    clearDropMarkers();
+    const rect = li.getBoundingClientRect();
+    const above = (e.clientY - rect.top) < rect.height / 2;
+    li.classList.add(above ? "drop-above" : "drop-below");
+  });
+  li.addEventListener("dragleave", () => {
+    li.classList.remove("drop-above", "drop-below");
+  });
+  li.addEventListener("drop", (e) => {
+    if (!dragSrc || dragState !== state) return;
+    e.preventDefault();
+    const rect = li.getBoundingClientRect();
+    const above = (e.clientY - rect.top) < rect.height / 2;
+    const srcIdx = parseInt(dragSrc.dataset.rank, 10);
+    let tgtIdx = parseInt(li.dataset.rank, 10);
+    clearDropMarkers();
+    if (srcIdx === tgtIdx) return;
+    const item = state.perm.splice(srcIdx, 1)[0];
+    if (srcIdx < tgtIdx) tgtIdx--;
+    if (!above) tgtIdx++;
+    state.perm.splice(tgtIdx, 0, item);
+    rerenderRows(state);
+    refreshCode(state);
+    if (state.isActual) {
+      actualState = state;
+      rescoreAll();
+    } else {
+      const score = computeScore(state, actualState);
+      const sv = state.el.querySelector(".score-val");
+      if (sv) sv.textContent = score == null ? "—" : score;
+    }
+  });
+}
+function clearDropMarkers() {
+  document.querySelectorAll(".rank-list li").forEach(li => {
+    li.classList.remove("drop-above", "drop-below");
+  });
+}
+
+function rerenderRows(state) {
+  const ul = state.el.querySelector(".rank-list");
+  ul.innerHTML = "";
+  state.perm.forEach((nameIdx, rankIdx) => {
+    ul.appendChild(makeRow(state, nameIdx, rankIdx));
+  });
+  paintTiers(state);
+}
+
+// --------- Header buttons ---------
+
+document.getElementById("add-list-btn").addEventListener("click", () => {
+  createList({});
+});
+
+document.getElementById("add-actual-btn").addEventListener("click", () => {
+  if (actualState) {
+    alert("An actual ranking already exists. Edit or delete it first.");
+    return;
+  }
+  const s = createList({ isActual: true });
+  actualState = s;
+  rescoreAll();
+});
+
+const loadDialog = document.getElementById("load-dialog");
+document.getElementById("load-code-btn").addEventListener("click", () => {
+  document.getElementById("load-code-input").value = "";
+  document.getElementById("load-name-input").value = "";
+  loadDialog.showModal();
+});
+document.getElementById("load-cancel").addEventListener("click", () => loadDialog.close());
+document.getElementById("load-confirm").addEventListener("click", () => {
+  const code = document.getElementById("load-code-input").value.trim();
+  const name = document.getElementById("load-name-input").value.trim() || null;
+  const asActual = document.getElementById("load-as-actual").checked;
+  if (!code) return;
+  try {
+    const decoded = decodeState(code);
+    if (asActual) {
+      if (actualState) {
+        alert("An actual ranking already exists. Delete it first.");
+        return;
+      }
+      const s = createList({ name: name || "Actual ranking", perm: decoded.perm, gold: decoded.gold, silver: decoded.silver, bronze: decoded.bronze, isActual: true });
+      actualState = s;
+    } else {
+      createList({ name, perm: decoded.perm, gold: decoded.gold, silver: decoded.silver, bronze: decoded.bronze });
+    }
+    rescoreAll();
+    loadDialog.close();
+  } catch (err) {
+    alert("Invalid code: " + err.message);
+  }
+});
+
+// --------- Seed UI ---------
+
+createList({}); // first prediction list
+</script>
+</body>
+</html>
