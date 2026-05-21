@@ -46,7 +46,7 @@
     margin-right: 12px;
   }
   header h1 .sub { color: var(--muted); font-weight: normal; margin-left: 6px; }
-  button, input[type="text"], input[type="number"] {
+  button, input[type="text"], input[type="number"], textarea {
     background: var(--panel-2);
     border: 1px solid var(--border);
     color: var(--text);
@@ -72,9 +72,16 @@
     border-color: var(--danger);
   }
   button.danger:hover { background: rgba(232, 95, 95, 0.1); }
-  input[type="text"]:focus, input[type="number"]:focus {
+  input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
     outline: none;
     border-color: var(--accent);
+  }
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    line-height: 1.4;
   }
 
   #board {
@@ -296,8 +303,10 @@
   <button id="add-actual-btn">Set actual ranking</button>
   <button id="add-aggregate-btn">Show aggregate</button>
   <button id="load-code-btn">Load from code</button>
+  <button id="bulk-export-btn">Bulk export</button>
+  <button id="bulk-import-btn">Bulk import</button>
   <button id="scoring-info-btn" title="How scoring works">Scoring</button>
-  <span class="hint" id="header-hint" style="margin-left:auto;">Drag to reorder · score shows once actual ranking is set</span>
+  <span class="hint" id="header-hint" style="margin-left:auto;">Drag to reorder · score shows once actual ranking is set · import/export lists in bulk now!</span>
 </header>
 
 <div id="board"></div>
@@ -342,6 +351,35 @@
   <div class="dlg-actions">
     <button id="load-cancel">Cancel</button>
     <button class="primary" id="load-confirm">Load</button>
+  </div>
+</dialog>
+
+<dialog id="bulk-export-dialog">
+  <h3>Bulk export</h3>
+  <p class="hint">Copy this JSON-like block. It stores every open list by name, role, and compact code.</p>
+  <textarea id="bulk-export-output" readonly></textarea>
+  <div class="dlg-actions">
+    <button id="bulk-export-close">Close</button>
+    <button class="primary" id="bulk-export-copy">Copy</button>
+  </div>
+</dialog>
+
+<dialog id="bulk-import-dialog">
+  <h3>Bulk import</h3>
+  <p class="hint">Paste a bulk export, an array of <code>{ name, code, actual }</code> objects, a map of <code>name: code</code>, or just an array of codes.</p>
+  <textarea id="bulk-import-input" placeholder='{
+  lists: [
+    { name: "Alice", code: "..." },
+    { name: "Actual", code: "...", actual: true }
+  ]
+}'></textarea>
+  <label style="display:block;margin-top:8px;font-size:12px;">
+    <input type="checkbox" id="bulk-import-replace" />
+    Replace all currently open lists before importing
+  </label>
+  <div class="dlg-actions">
+    <button id="bulk-import-cancel">Cancel</button>
+    <button class="primary" id="bulk-import-confirm">Import</button>
   </div>
 </dialog>
 
@@ -859,6 +897,116 @@ function rerenderRows(state) {
   paintTiers(state);
 }
 
+
+// --------- Bulk import/export ---------
+
+function makeBulkExportText() {
+  const payload = {
+    version: 1,
+    app: "ÖChO 2026 Ranking Predictor",
+    lists: lists.map(l => ({
+      name: l.name,
+      code: encodeState(l.perm, l.gold, l.silver, l.bronze),
+      actual: !!l.isActual,
+    })),
+  };
+  return JSON.stringify(payload);
+}
+
+function parseJsonLike(text) {
+  const src = text.trim();
+  if (!src) throw new Error("Nothing to import");
+  try {
+    return JSON.parse(src);
+  } catch (_) {
+    // Allows convenient object-literal syntax such as:
+    // { lists: [{ name: "Alice", code: "..." }] }
+    // Only paste text you trust; this is intended for local saved ranking codes.
+    return Function('"use strict"; return (' + src + ');')();
+  }
+}
+
+function entriesFromBulkPayload(payload) {
+  let raw;
+  if (Array.isArray(payload)) {
+    raw = payload;
+  } else if (payload && Array.isArray(payload.lists)) {
+    raw = payload.lists;
+  } else if (payload && Array.isArray(payload.predictions)) {
+    raw = payload.predictions;
+    if (payload.actual) raw = [...raw, { name: "Actual ranking", code: payload.actual, actual: true }];
+  } else if (payload && typeof payload === "object") {
+    raw = Object.entries(payload).map(([name, value]) => {
+      if (value && typeof value === "object") {
+        return { name, ...value };
+      }
+      return { name, code: value, actual: /^actual$/i.test(name) };
+    });
+  } else {
+    throw new Error("Expected an object or array");
+  }
+
+  return raw.map((entry, i) => {
+    if (typeof entry === "string") {
+      return { name: `Imported ${i + 1}`, code: entry, actual: false };
+    }
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`Entry ${i + 1} is not a code or object`);
+    }
+    const code = String(entry.code ?? entry.c ?? "").trim();
+    if (!code) throw new Error(`Entry ${i + 1} is missing a code`);
+    return {
+      name: entry.name == null ? `Imported ${i + 1}` : String(entry.name),
+      code,
+      actual: !!(entry.actual ?? entry.isActual),
+    };
+  });
+}
+
+function clearAllLists() {
+  for (const l of [...lists]) removeList(l);
+  actualState = null;
+}
+
+function importBulkText(text, { replaceExisting = false } = {}) {
+  const entries = entriesFromBulkPayload(parseJsonLike(text));
+  if (entries.length === 0) throw new Error("No lists found");
+  if (replaceExisting) clearAllLists();
+
+  let imported = 0;
+  let skippedActual = 0;
+  for (const entry of entries) {
+    const decoded = decodeState(entry.code);
+    if (entry.actual) {
+      if (actualState) {
+        skippedActual++;
+        continue;
+      }
+      const s = createList({
+        name: entry.name || "Actual ranking",
+        perm: decoded.perm,
+        gold: decoded.gold,
+        silver: decoded.silver,
+        bronze: decoded.bronze,
+        isActual: true,
+      });
+      actualState = s;
+    } else {
+      createList({
+        name: entry.name || null,
+        perm: decoded.perm,
+        gold: decoded.gold,
+        silver: decoded.silver,
+        bronze: decoded.bronze,
+      });
+    }
+    imported++;
+  }
+  rescoreAll();
+  refreshAggregate();
+  return { imported, skippedActual };
+}
+
 // --------- Header buttons ---------
 
 document.getElementById("add-list-btn").addEventListener("click", () => {
@@ -911,6 +1059,39 @@ document.getElementById("load-confirm").addEventListener("click", () => {
     loadDialog.close();
   } catch (err) {
     alert("Invalid code: " + err.message);
+  }
+});
+
+
+const bulkExportDialog = document.getElementById("bulk-export-dialog");
+document.getElementById("bulk-export-btn").addEventListener("click", () => {
+  document.getElementById("bulk-export-output").value = makeBulkExportText();
+  bulkExportDialog.showModal();
+});
+document.getElementById("bulk-export-close").addEventListener("click", () => bulkExportDialog.close());
+document.getElementById("bulk-export-copy").addEventListener("click", () => {
+  const out = document.getElementById("bulk-export-output");
+  out.select();
+  navigator.clipboard.writeText(out.value).catch(() => document.execCommand("copy"));
+});
+
+const bulkImportDialog = document.getElementById("bulk-import-dialog");
+document.getElementById("bulk-import-btn").addEventListener("click", () => {
+  document.getElementById("bulk-import-input").value = "";
+  document.getElementById("bulk-import-replace").checked = false;
+  bulkImportDialog.showModal();
+});
+document.getElementById("bulk-import-cancel").addEventListener("click", () => bulkImportDialog.close());
+document.getElementById("bulk-import-confirm").addEventListener("click", () => {
+  try {
+    const result = importBulkText(document.getElementById("bulk-import-input").value, {
+      replaceExisting: document.getElementById("bulk-import-replace").checked,
+    });
+    bulkImportDialog.close();
+    const skipped = result.skippedActual ? ` (${result.skippedActual} actual ranking skipped because one already exists)` : "";
+    alert(`Imported ${result.imported} list${result.imported === 1 ? "" : "s"}${skipped}.`);
+  } catch (err) {
+    alert("Bulk import failed: " + err.message);
   }
 });
 
