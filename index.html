@@ -210,6 +210,25 @@
     background: rgba(205, 127, 50, 0.18);
     border-color: rgba(205, 127, 50, 0.5);
   }
+  .list-card.aggregate {
+    border-color: #6c5ce7;
+    box-shadow: 0 0 0 1px #6c5ce7;
+  }
+  .list-card.aggregate .card-title { color: #a99cff; }
+  ul.agg-list li {
+    cursor: default;
+  }
+  ul.agg-list li .agg-val {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    margin-left: 6px;
+  }
+  ul.agg-list .empty {
+    justify-content: center;
+    color: var(--muted);
+    font-style: italic;
+  }
   .code-row {
     display: flex;
     gap: 4px;
@@ -272,6 +291,7 @@
   <h1>ÖChO 2026 Ranking <span class="sub">— predictor & scorer</span></h1>
   <button class="primary" id="add-list-btn">+ New list</button>
   <button id="add-actual-btn">Set actual ranking</button>
+  <button id="add-aggregate-btn">Show aggregate</button>
   <button id="load-code-btn">Load from code</button>
   <span class="hint" id="header-hint" style="margin-left:auto;">Drag to reorder · scoring: TBD</span>
 </header>
@@ -448,8 +468,14 @@ function createList({ name, perm, gold, silver, bronze, isActual }) {
   if (state.isActual) {
     document.getElementById("board").prepend(state.el);
   } else {
-    document.getElementById("board").appendChild(state.el);
+    const board = document.getElementById("board");
+    if (aggregateCard && aggregateCard.parentNode === board) {
+      board.insertBefore(state.el, aggregateCard);
+    } else {
+      board.appendChild(state.el);
+    }
   }
+  refreshAggregate();
   return state;
 }
 
@@ -461,6 +487,7 @@ function removeList(state) {
     actualState = null;
     rescoreAll();
   }
+  refreshAggregate();
 }
 
 function rescoreAll() {
@@ -470,6 +497,64 @@ function rescoreAll() {
     const scoreEl = l.el.querySelector(".score-val");
     if (scoreEl) scoreEl.textContent = score == null ? "—" : score;
   }
+}
+
+// --------- Aggregate card (avg rank across all predictions) ---------
+
+let aggregateCard = null;
+
+function createAggregateCard() {
+  if (aggregateCard) {
+    aggregateCard.scrollIntoView({ behavior: "smooth", inline: "end" });
+    return;
+  }
+  const card = document.createElement("div");
+  card.className = "list-card aggregate";
+  card.innerHTML = `
+    <div class="card-head">
+      <div class="card-title" style="border-color:transparent;background:transparent;">Aggregate (avg rank)</div>
+      <button class="danger" title="Close">✕</button>
+    </div>
+    <div class="hint">Average rank across all open predictions — actual ranking excluded</div>
+    <ul class="rank-list agg-list"></ul>
+  `;
+  card.querySelector(".danger").addEventListener("click", () => {
+    card.remove();
+    aggregateCard = null;
+  });
+  document.getElementById("board").appendChild(card);
+  aggregateCard = card;
+  refreshAggregate();
+}
+
+function refreshAggregate() {
+  if (!aggregateCard) return;
+  const ul = aggregateCard.querySelector(".agg-list");
+  const predictions = lists.filter(l => !l.isActual);
+  ul.innerHTML = "";
+  if (predictions.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No predictions to aggregate";
+    ul.appendChild(li);
+    return;
+  }
+  const sums = new Array(N).fill(0);
+  for (const p of predictions) {
+    p.perm.forEach((nameIdx, rankIdx) => {
+      sums[nameIdx] += rankIdx + 1;
+    });
+  }
+  const entries = sums.map((s, i) => ({ nameIdx: i, avg: s / predictions.length }));
+  entries.sort((a, b) => a.avg - b.avg || PARTICIPANTS[a.nameIdx].localeCompare(PARTICIPANTS[b.nameIdx]));
+  entries.forEach((entry, i) => {
+    const li = document.createElement("li");
+    li.innerHTML =
+      `<span class="rank-num">${i + 1}.</span>` +
+      `<span class="name">${PARTICIPANTS[entry.nameIdx]}</span>` +
+      `<span class="agg-val">${entry.avg.toFixed(2)}</span>`;
+    ul.appendChild(li);
+  });
 }
 
 // --------- Card rendering ---------
@@ -662,6 +747,7 @@ function attachDnd(li, state) {
       const score = computeScore(state, actualState);
       const sv = state.el.querySelector(".score-val");
       if (sv) sv.textContent = score == null ? "—" : score;
+      refreshAggregate();
     }
   });
 }
@@ -694,6 +780,10 @@ document.getElementById("add-actual-btn").addEventListener("click", () => {
   const s = createList({ isActual: true });
   actualState = s;
   rescoreAll();
+});
+
+document.getElementById("add-aggregate-btn").addEventListener("click", () => {
+  createAggregateCard();
 });
 
 const loadDialog = document.getElementById("load-dialog");
