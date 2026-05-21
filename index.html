@@ -134,8 +134,11 @@
   .score-box .score-val {
     color: var(--text);
     font-weight: 600;
-    font-size: 14px;
+    font-size: 16px;
   }
+  .score-box .score-label { display: block; font-size: 11px; color: var(--muted); }
+  .score-box .score-breakdown { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .score-box .right { text-align: right; }
   .cutoffs {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -293,10 +296,36 @@
   <button id="add-actual-btn">Set actual ranking</button>
   <button id="add-aggregate-btn">Show aggregate</button>
   <button id="load-code-btn">Load from code</button>
-  <span class="hint" id="header-hint" style="margin-left:auto;">Drag to reorder · scoring: TBD</span>
+  <button id="scoring-info-btn" title="How scoring works">Scoring</button>
+  <span class="hint" id="header-hint" style="margin-left:auto;">Drag to reorder · score shows once actual ranking is set</span>
 </header>
 
 <div id="board"></div>
+
+<dialog id="scoring-dialog">
+  <h3>How scoring works</h3>
+  <p style="font-size:13px;line-height:1.5;">
+    Higher is better. Three components sum to the total:
+  </p>
+  <ul style="font-size:13px;line-height:1.5;padding-left:18px;">
+    <li><strong>Position (P)</strong> — per participant: <code>max(0, 10 − Δ)</code> reward,
+      minus <code>max(0, Δ − 8)² / 2</code> penalty.
+      Exact rank = +10. Misses beyond 8 positions get a fast-growing penalty.</li>
+    <li><strong>Medal tier (M)</strong> — per participant, compare your tier
+      (using <em>your</em> cutoffs) vs actual tier (using <em>actual</em> cutoffs):
+      same medal tier <strong>+20</strong>, both medals but different tier <strong>+8</strong>,
+      both "no medal" <strong>+2</strong>, medal vs none mismatch <strong>0</strong>.</li>
+    <li><strong>Cutoff lines (C)</strong> — for each of gold/silver/bronze:
+      <code>max(0, 10 − 2·|Δcutoff|)</code>. Max +30.</li>
+  </ul>
+  <p style="font-size:12px;color:var(--muted);">
+    Reference: a perfect prediction with cutoffs 3/6/9 scores <strong>480</strong>.
+    Random rankings hover around 60–120.
+  </p>
+  <div class="dlg-actions">
+    <button class="primary" id="scoring-close">Got it</button>
+  </div>
+</dialog>
 
 <dialog id="load-dialog">
   <h3>Load list from code</h3>
@@ -427,19 +456,63 @@ function decodeState(code) {
   return { perm, gold, silver, bronze };
 }
 
-// --------- Scoring (placeholder until user provides mechanism) ---------
+// --------- Scoring ---------
+//
+// Composite score, higher = better.
+//   P (position):   per-participant   max(0, 10 - Δ)   −   max(0, Δ-8)² / 2
+//                   Exact rank = +10. Quadratic penalty past 8 off so bad misses dominate.
+//   M (medal tier): per-participant tier match using each side's own cutoffs:
+//                     same medal tier               = +20
+//                     both medals, different tier   = +8
+//                     both "no medal"               = +2
+//                     medal vs none mismatch        = 0
+//   C (cutoff):     per cutoff line   max(0, 10 - 2·|Δcutoff|).  Max +30.
 
-let actualState = null; // { perm, gold, silver, bronze } once set
+let actualState = null;
+
+function tierAt(rankIdx, gold, silver, bronze) {
+  const pos = rankIdx + 1;
+  if (pos <= gold) return 3;      // gold
+  if (pos <= silver) return 2;    // silver
+  if (pos <= bronze) return 1;    // bronze
+  return 0;                       // none
+}
+
+function tierMatchScore(predT, actT) {
+  if (predT === actT) return predT === 0 ? 2 : 20;
+  if (predT > 0 && actT > 0) return 8;
+  return 0;
+}
 
 function computeScore(state, actual) {
-  // Placeholder: simple Spearman-like score: sum |predicted_rank - actual_rank|.
-  // Will be replaced with the real scoring mechanism once the user defines it.
   if (!actual) return null;
   const actualRankOf = new Array(N);
   actual.perm.forEach((id, i) => { actualRankOf[id] = i; });
-  let total = 0;
-  state.perm.forEach((id, i) => { total += Math.abs(i - actualRankOf[id]); });
-  return total;
+
+  let P = 0, M = 0;
+  state.perm.forEach((id, predIdx) => {
+    const actIdx = actualRankOf[id];
+    const delta = Math.abs(predIdx - actIdx);
+    const positionPts = Math.max(0, 10 - delta);
+    const missPenalty = Math.pow(Math.max(0, delta - 8), 2) / 2;
+    P += positionPts - missPenalty;
+
+    const predT = tierAt(predIdx, state.gold, state.silver, state.bronze);
+    const actT = tierAt(actIdx, actual.gold, actual.silver, actual.bronze);
+    M += tierMatchScore(predT, actT);
+  });
+
+  let C = 0;
+  for (const k of ["gold", "silver", "bronze"]) {
+    C += Math.max(0, 10 - 2 * Math.abs(state[k] - actual[k]));
+  }
+
+  return {
+    total: Math.round(P + M + C),
+    P: Math.round(P),
+    M: Math.round(M),
+    C: Math.round(C),
+  };
 }
 
 // --------- List management ---------
@@ -490,12 +563,23 @@ function removeList(state) {
   refreshAggregate();
 }
 
+function renderScoreInto(state, score) {
+  const valEl = state.el.querySelector(".score-val");
+  const brkEl = state.el.querySelector(".score-breakdown");
+  if (!valEl) return;
+  if (score == null) {
+    valEl.textContent = "—";
+    if (brkEl) brkEl.textContent = "—";
+    return;
+  }
+  valEl.textContent = score.total;
+  if (brkEl) brkEl.textContent = `pos ${score.P} · tier ${score.M} · cut ${score.C}`;
+}
+
 function rescoreAll() {
   for (const l of lists) {
     if (l.isActual) continue;
-    const score = computeScore(l, actualState);
-    const scoreEl = l.el.querySelector(".score-val");
-    if (scoreEl) scoreEl.textContent = score == null ? "—" : score;
+    renderScoreInto(l, computeScore(l, actualState));
   }
 }
 
@@ -597,7 +681,13 @@ function renderCard(state) {
   if (!state.isActual) {
     const scoreBox = document.createElement("div");
     scoreBox.className = "score-box";
-    scoreBox.innerHTML = `<span>Score (vs actual)</span><span class="score-val">—</span>`;
+    scoreBox.innerHTML = `
+      <div>
+        <span class="score-label">Score vs actual</span>
+        <div class="score-breakdown">—</div>
+      </div>
+      <span class="score-val">—</span>`;
+    scoreBox.title = "Position + medal tier + cutoff accuracy. Click 'Scoring' in header for details.";
     card.appendChild(scoreBox);
   }
 
@@ -625,6 +715,11 @@ function renderCard(state) {
       syncCutoffInputs(state);
       paintTiers(state);
       refreshCode(state);
+      if (state.isActual) {
+        rescoreAll();
+      } else {
+        renderScoreInto(state, computeScore(state, actualState));
+      }
     });
   });
   card.appendChild(cutoffs);
@@ -744,9 +839,7 @@ function attachDnd(li, state) {
       actualState = state;
       rescoreAll();
     } else {
-      const score = computeScore(state, actualState);
-      const sv = state.el.querySelector(".score-val");
-      if (sv) sv.textContent = score == null ? "—" : score;
+      renderScoreInto(state, computeScore(state, actualState));
       refreshAggregate();
     }
   });
@@ -785,6 +878,10 @@ document.getElementById("add-actual-btn").addEventListener("click", () => {
 document.getElementById("add-aggregate-btn").addEventListener("click", () => {
   createAggregateCard();
 });
+
+const scoringDialog = document.getElementById("scoring-dialog");
+document.getElementById("scoring-info-btn").addEventListener("click", () => scoringDialog.showModal());
+document.getElementById("scoring-close").addEventListener("click", () => scoringDialog.close());
 
 const loadDialog = document.getElementById("load-dialog");
 document.getElementById("load-code-btn").addEventListener("click", () => {
